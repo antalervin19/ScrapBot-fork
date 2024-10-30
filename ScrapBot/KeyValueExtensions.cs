@@ -4,12 +4,17 @@ namespace ScrapBot;
 
 public static class KeyValueExtensions
 {
-    public static string[]? GetStoreTagsIfExists(this KeyValue keyValue)
+    public static Dictionary<string, string>? GetStoreTagsIfExists(this KeyValue keyValue)
     {
         var store_tags = keyValue.CustomIndex("common/store_tags");
         if (store_tags is null) return null;
 
-        return store_tags.Children.ConvertAll(kv => kv.Value is null ? "" : kv.Value).ToArray();
+        var res = new Dictionary<string, string>();
+        foreach (var kv in store_tags.Children)
+        {
+            res.Add(kv.Name!, kv.Value!);
+        }
+        return res;
     }
     public static string PrintString(this KeyValue keyValue)
     {

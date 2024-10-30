@@ -48,9 +48,9 @@ public class Service : IHostedService
     private bool isStopping;
     private int reconnectAttempts;
 
-    private Dictionary<uint, List<string>> storeTags = new() {
-        {387990, new List<string>()},
-        {588870, new List<string>()}
+    private Dictionary<uint, Dictionary<string, string>> storeTags = new() {
+        {387990, new Dictionary<string,string>()},
+        {588870, new Dictionary<string, string>()}
     };
 
     private readonly HttpClient httpClient = new();
@@ -183,7 +183,7 @@ public class Service : IHostedService
             var storeTagsFetch = await fetchStoreTags(id);
             if (storeTagsFetch is not null)
             {
-                storeTags[id] = (storeTagsFetch).ToList();
+                storeTags[id] = storeTagsFetch;
             }
         }
     }
@@ -208,9 +208,27 @@ public class Service : IHostedService
                 if (!storeTags.ContainsKey(id)) continue;
 
                 var tagsOld = storeTags[id];
-                if (!tagsCurrent.All(tagsOld.Contains) || tagsCurrent.Length != tagsOld.ToArray().Length)
+
+                var diffKeys = false;
+                var sameValues = tagsCurrent.Values.All(tagsOld.Values.Contains);
+                if (!sameValues)
                 {
-                    storeTags[id] = tagsCurrent.ToList();
+                    storeTags[id] = tagsCurrent;
+                    continue;
+                }
+
+                foreach (var (k, v) in tagsCurrent)
+                {
+                    tagsOld.TryGetValue(k, out var v2);
+                    if (v != v2)
+                    {
+                        diffKeys = true;
+                        break;
+                    }
+                }
+                if (tagsCurrent.Count != tagsOld.Count || diffKeys)
+                {
+                    storeTags[id] = tagsCurrent;
                     continue;
                 }
             }
@@ -266,7 +284,7 @@ public class Service : IHostedService
     }
 
 
-    private async Task<string[]?> fetchStoreTags(uint appid)
+    private async Task<Dictionary<string, string>?> fetchStoreTags(uint appid)
     {
         var req = await steamApps.PICSGetProductInfo(new PICSRequest(appid), new PICSRequest());
         if (req.Failed || req.Results is null) return null;
@@ -274,7 +292,7 @@ public class Service : IHostedService
         var result = req.Results[0].Apps.Values.ToArray()[0];
         if (result is null) return null;
 
-        return KeyValueExtensions.GetStoreTagsIfExists(result.KeyValues);
+        return result.KeyValues.GetStoreTagsIfExists();
     }
 }
 
