@@ -52,6 +52,10 @@ public class Service : IHostedService
         {387990, new Dictionary<string,string>()},
         {588870, new Dictionary<string, string>()}
     };
+    private Dictionary<uint, string> steamRating = new() {
+        {387990, "0"},
+        {588870, "0"}
+    };
 
     private readonly HttpClient httpClient = new();
 
@@ -185,6 +189,11 @@ public class Service : IHostedService
             {
                 storeTags[id] = storeTagsFetch;
             }
+            var rating = await fetchSteamRating(id);
+            if (rating is not null)
+            {
+								steamRating[id] = rating;
+            }
         }
     }
 
@@ -202,6 +211,10 @@ public class Service : IHostedService
         foreach (var (id, app) in apps)
         {
             var tagsCurrent = await fetchStoreTags(id);
+						var ratingCurrent = await fetchSteamRating(id);
+						if (ratingCurrent is not null) {
+							if (steamRating[id] != ratingCurrent) continue;
+						}
 
             if (tagsCurrent is not null)
             {
@@ -294,6 +307,17 @@ public class Service : IHostedService
 
         return result.KeyValues.GetStoreTagsIfExists();
     }
+		private async Task<string?> fetchSteamRating(uint appid) {
+        var req = await steamApps.PICSGetProductInfo(new PICSRequest(appid), new PICSRequest());
+        if (req.Failed || req.Results is null) return null;
+        var result = req.Results[0].Apps.Values.ToArray()[0];
+				var reviewPercentage = result.KeyValues.CustomIndex("common/review_percentage")?.Value;
+
+				logger.LogInformation("RATING {}: {}",appid,reviewPercentage);
+
+				return reviewPercentage;
+
+		}
 }
 
 #if STEAM_PACKET_VERBOSE
