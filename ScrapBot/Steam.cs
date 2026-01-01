@@ -184,12 +184,13 @@ public class Service : IHostedService
 
         foreach (var (id, _) in Apps)
         {
-            var storeTagsFetch = await fetchStoreTags(id);
+            var pics = await fetchPICS(id);
+            var storeTagsFetch = pics?.GetStoreTagsIfExists();
             if (storeTagsFetch is not null)
             {
                 storeTags[id] = storeTagsFetch;
             }
-            steamRating[id] = await fetchSteamRating(id);
+            steamRating[id] = pics?.CustomIndex("common/review_percentage")?.Value;
         }
     }
 
