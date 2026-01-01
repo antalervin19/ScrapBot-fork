@@ -52,9 +52,9 @@ public class Service : IHostedService
         {387990, new Dictionary<string,string>()},
         {588870, new Dictionary<string, string>()}
     };
-    private Dictionary<uint, string> steamRating = new() {
-        {387990, "0"},
-        {588870, "0"}
+    private Dictionary<uint, string?> steamRating = new() {
+        {387990, null},
+        {588870, null}
     };
 
     private readonly HttpClient httpClient = new();
@@ -74,7 +74,7 @@ public class Service : IHostedService
         steamFriends = steamClient.GetHandler<SteamFriends>()!;
 
 #if STEAM_PACKET_VERBOSE
-        _steamClient.AddHandler(new VerboseHandler());
+        steamClient.AddHandler(new VerboseHandler());
 #endif
 
         callbackManager = new CallbackManager(steamClient);
@@ -189,17 +189,58 @@ public class Service : IHostedService
             {
                 storeTags[id] = storeTagsFetch;
             }
-            var rating = await fetchSteamRating(id);
-            if (rating is not null)
-            {
-                steamRating[id] = rating;
-            }
+            steamRating[id] = await fetchSteamRating(id);
         }
     }
 
     private void OnUserLoggedOff(SteamUser.LoggedOffCallback callback)
     {
         logger.LogInformation("Logged Off");
+    }
+
+    private async Task<bool> shouldSkipPICSChange(uint appid)
+    {
+        var pics = await fetchPICS(appid);
+        if (pics is null) return false;
+        var ratingCurrent = pics.CustomIndex("common/review_percentage")?.Value;
+        var tagsCurrent = pics.GetStoreTagsIfExists();
+        if (ratingCurrent is not null && steamRating[appid] != ratingCurrent)
+        {
+            steamRating[appid] = ratingCurrent;
+            return true;
+        }
+
+        if (tagsCurrent is not null)
+        {
+            if (!storeTags.ContainsKey(appid)) return false;
+
+            var tagsOld = storeTags[appid];
+
+            var diffKeys = false;
+            var sameValues = tagsCurrent.Values.All(tagsOld.Values.Contains);
+            if (!sameValues)
+            {
+                storeTags[appid] = tagsCurrent;
+                return true;
+            }
+
+            foreach (var (k, v) in tagsCurrent)
+            {
+                tagsOld.TryGetValue(k, out var v2);
+                if (v != v2)
+                {
+                    diffKeys = true;
+                    break;
+                }
+            }
+            if (tagsCurrent.Count != tagsOld.Count || diffKeys)
+            {
+                storeTags[appid] = tagsCurrent;
+                return true;
+            }
+
+        }
+        return false;
     }
 
     private async void OnPICSChanges(SteamApps.PICSChangesCallback callback)
@@ -210,42 +251,7 @@ public class Service : IHostedService
         if (apps.Length <= 0) return;
         foreach (var (id, app) in apps)
         {
-            var tagsCurrent = await fetchStoreTags(id);
-            var ratingCurrent = await fetchSteamRating(id);
-            if (ratingCurrent is not null)
-            {
-                if (steamRating[id] != ratingCurrent) continue;
-            }
-
-            if (tagsCurrent is not null)
-            {
-                if (!storeTags.ContainsKey(id)) continue;
-
-                var tagsOld = storeTags[id];
-
-                var diffKeys = false;
-                var sameValues = tagsCurrent.Values.All(tagsOld.Values.Contains);
-                if (!sameValues)
-                {
-                    storeTags[id] = tagsCurrent;
-                    continue;
-                }
-
-                foreach (var (k, v) in tagsCurrent)
-                {
-                    tagsOld.TryGetValue(k, out var v2);
-                    if (v != v2)
-                    {
-                        diffKeys = true;
-                        break;
-                    }
-                }
-                if (tagsCurrent.Count != tagsOld.Count || diffKeys)
-                {
-                    storeTags[id] = tagsCurrent;
-                    continue;
-                }
-            }
+            if (await shouldSkipPICSChange(id)) continue;
             Apps.TryGetValue(app.ID, out var appName);
             foreach (var webhook in options.Webhooks)
             {
@@ -298,27 +304,11 @@ public class Service : IHostedService
     }
 
 
-    private async Task<Dictionary<string, string>?> fetchStoreTags(uint appid)
+    private async Task<KeyValue?> fetchPICS(uint appid)
     {
         var req = await steamApps.PICSGetProductInfo(new PICSRequest(appid), new PICSRequest());
         if (req.Failed || req.Results is null) return null;
-
-        var result = req.Results[0].Apps.Values.ToArray()[0];
-        if (result is null) return null;
-
-        return result.KeyValues.GetStoreTagsIfExists();
-    }
-    private async Task<string?> fetchSteamRating(uint appid)
-    {
-        var req = await steamApps.PICSGetProductInfo(new PICSRequest(appid), new PICSRequest());
-        if (req.Failed || req.Results is null) return null;
-        var result = req.Results[0].Apps.Values.ToArray()[0];
-        var reviewPercentage = result.KeyValues.CustomIndex("common/review_percentage")?.Value;
-
-        logger.LogInformation("RATING {}: {}", appid, reviewPercentage);
-
-        return reviewPercentage;
-
+        return req.Results[0].Apps.Values.ToArray()[0].KeyValues;
     }
 }
 
