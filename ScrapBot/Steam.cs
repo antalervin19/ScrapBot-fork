@@ -185,12 +185,12 @@ public class Service : IHostedService
         foreach (var (id, _) in Apps)
         {
             var pics = await fetchPICS(id);
-            var storeTagsFetch = pics?.GetStoreTagsIfExists();
+            var storeTagsFetch = pics?["common"]["store_tags"].ToDict();
             if (storeTagsFetch is not null)
             {
                 storeTags[id] = storeTagsFetch;
             }
-            steamRating[id] = pics?.CustomIndex("common/review_percentage")?.Value;
+            steamRating[id] = pics?["common"]["review_percentage"]?.Value;
         }
     }
 
@@ -203,8 +203,8 @@ public class Service : IHostedService
     {
         var pics = await fetchPICS(appid);
         if (pics is null) return false;
-        var ratingCurrent = pics.CustomIndex("common/review_percentage")?.Value;
-        var tagsCurrent = pics.GetStoreTagsIfExists();
+        var ratingCurrent = pics["common"]["review_percentage"]?.Value;
+        var tagsCurrent = pics["common"]["store_tags"].ToDict();
         if (ratingCurrent is not null && steamRating[appid] != ratingCurrent)
         {
             steamRating[appid] = ratingCurrent;
