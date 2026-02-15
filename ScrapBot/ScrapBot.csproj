@@ -9,7 +9,6 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="RevoltSharp" Version="6.1.1" />
         <PackageReference Include="SteamKit2" Version="3.0.0-Beta.3" />
         <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0-preview.1.23110.8" />
         <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" Version="8.0.0-preview.1.23110.8" />

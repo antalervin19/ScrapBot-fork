@@ -9,7 +9,7 @@ internal static class Program
     internal static async Task Main(string[] args)
     {
         var webhookFile = (new StreamReader("./webhooks.json")).ReadToEnd();
-        var webhooks = JsonSerializer.Deserialize<List<Webhook>>(webhookFile);
+        var webhooks = JsonSerializer.Deserialize<List<WebhookFile>>(webhookFile);
 
         if (webhooks == null)
         {
@@ -39,10 +39,4 @@ internal static class Program
     }
 }
 
-public class Webhook
-{
-    public required string type { get; set; }
-    public required string token { get; set; }
-    public string? revolt_chat { get; set; }
-}
 

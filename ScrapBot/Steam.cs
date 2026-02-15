@@ -4,9 +4,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SteamKit2;
-using RevoltSharp;
-using System.Text.Json;
-using System.Text;
 using static SteamKit2.SteamApps;
 
 namespace ScrapBot.Steam;
@@ -17,7 +14,7 @@ public class Options
     public string? Password { get; set; }
     public int MaxReconnectDelaySeconds { get; set; }
     public int PICSRefreshDelaySeconds { get; set; }
-    public required List<Webhook> Webhooks { get; set; }
+    public required List<WebhookFile> Webhooks { get; set; }
 }
 
 
@@ -254,50 +251,17 @@ public class Service : IHostedService
         {
             if (await shouldSkipPICSChange(id)) continue;
             Apps.TryGetValue(app.ID, out var appName);
+            var content = $"New SteamDB change detected! `{appName} ({app.ID})`  \nhttps://steamdb.info/app/{app.ID}/history/?changeid={app.ChangeNumber}";
             foreach (var webhook in options.Webhooks)
             {
-                switch (webhook.type)
+                Webhook.impl.TryGetValue(webhook.type, out var impl);
+                if (impl is null)
                 {
-                    case "discord":
-                        {
-                            var content = $"New SteamDB change detected! `{appName} ({app.ID})`  \nhttps://steamdb.info/app/{app.ID}/history/?changeid={app.ChangeNumber}";
-                            using StringContent jsonContent = new(
-                                JsonSerializer.Serialize(new
-                                {
-                                    content = content,
-                                }),
-                                Encoding.UTF8,
-                                "application/json"
-                            );
-                            var res = await httpClient.PostAsync(webhook.token, jsonContent);
-
-                            res.Dispose();
-                            break;
-                        }
-                    case "revolt":
-                        {
-                            var client = new RevoltClient(webhook.token, ClientMode.Http);
-                            await client.StartAsync();
-
-                            var content =
-                $"New Steam PICS Change for App `{appName} ({app.ID})`  \nhttps://steamdb.info/app/{app.ID}/history/?changeid={app.ChangeNumber}";
-
-                            if (webhook.revolt_chat == null)
-                            {
-                                Console.WriteLine("No channel for revolt webhook");
-                                return;
-                            }
-
-                            var channel = await client.Rest.GetChannelAsync(webhook.revolt_chat);
-                            if (channel == null)
-                            {
-                                Console.WriteLine("Channel for revolt not found");
-                                return;
-                            }
-                            await channel.SendMessageAsync(content);
-                            break;
-                        }
+                    logger.LogWarning("Webhook impl not found");
+                    continue;
                 }
+
+                await impl.send(content, webhook.data);
             }
 
         }
