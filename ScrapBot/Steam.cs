@@ -270,7 +270,7 @@ public class Service : IHostedService
 
         UpdateGraphHistory();
         var graphPath = GenerateGraph();
-        DeletePreviousGraphIfSameDay(graphPath);
+        DeleteLastGraph(graphPath);
         foreach (var webhook in options.Webhooks)
         {
             Webhook.impl.TryGetValue(webhook.type, out var impl);
@@ -356,17 +356,11 @@ public class Service : IHostedService
         return filePath;
     }
 
-    private void DeletePreviousGraphIfSameDay(string currentPath)
+    private void DeleteLastGraph(string currentPath)
     {
-        if (!string.IsNullOrEmpty(lastGraphPath) && lastGraphPath != currentPath)
+        if (!string.IsNullOrEmpty(lastGraphPath) && lastGraphPath != currentPath && File.Exists(lastGraphPath))
         {
-            var lastDate = Path.GetFileNameWithoutExtension(lastGraphPath)?.Split('_').LastOrDefault();
-            var today = DateTime.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
-
-            if (lastDate == today && File.Exists(lastGraphPath))
-            {
-                File.Delete(lastGraphPath);
-            }
+            File.Delete(lastGraphPath);
         }
     }
 
