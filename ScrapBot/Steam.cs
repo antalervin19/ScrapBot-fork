@@ -362,6 +362,7 @@ public class Service : IHostedService
         {
             var lastDate = Path.GetFileNameWithoutExtension(lastGraphPath)?.Split('_').LastOrDefault();
             var today = DateTime.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+
             if (lastDate == today && File.Exists(lastGraphPath))
             {
                 File.Delete(lastGraphPath);
