@@ -275,7 +275,7 @@ public class Service : IHostedService
         {
             Webhook.impl.TryGetValue(webhook.type, out var impl);
             if (impl is null) continue;
-            await impl.send($"7-Day Update Graph: {graphPath}", webhook.data);
+            await impl.send($"30-Day Update Graph: {graphPath}", webhook.data);
         }
         lastGraphPath = graphPath;
     }
@@ -290,28 +290,32 @@ public class Service : IHostedService
         {
             updateHistory.Add((today, 1));
         }
-        if (updateHistory.Count > 7)
+        if (updateHistory.Count > 30)
             updateHistory.RemoveAt(0);
     }
 
     private string GenerateGraph()
     {
+        int window = 30;
         var days = updateHistory.Select(x => x.day).ToArray();
         var updates = updateHistory.Select(x => x.updates).ToArray();
 
-        if (days.Length < 7)
+        if (days.Length < window)
         {
-            var missing = 7 - days.Length;
-            var start = days.Length > 0 ? days[0].AddDays(-missing) : DateTime.UtcNow.Date.AddDays(-6);
+            var missing = window - days.Length;
+            var start = days.Length > 0 ? days[0].AddDays(-missing) : DateTime.UtcNow.Date.AddDays(-(window - 1));
             var fillDays = Enumerable.Range(0, missing).Select(i => start.AddDays(i)).ToArray();
-
             days = fillDays.Concat(days).ToArray();
             updates = Enumerable.Repeat(0, missing).Concat(updates).ToArray();
         }
 
-        double[] xs = Enumerable.Range(0, 7).Select(i => (double)i).ToArray();
+        double[] xs = Enumerable.Range(0, window).Select(i => (double)i).ToArray();
         double[] ys = updates.Select(x => (double)x).ToArray();
-        string[] labels = days.Select(d => d == DateTime.UtcNow.Date ? "Today" : d == DateTime.UtcNow.Date.AddDays(-1) ? "Yesterday" : d.Day.ToString()).ToArray();
+        string[] labels = days.Select(d =>
+            d == DateTime.UtcNow.Date ? "Today" :
+            d == DateTime.UtcNow.Date.AddDays(-1) ? "Yesterday" :
+            d.ToString("MM-dd")
+        ).ToArray();
 
         var plt = new Plot();
         var green = new ScottPlot.Color(0, 255, 120);
@@ -329,6 +333,12 @@ public class Service : IHostedService
         plt.Axes.Top.IsVisible = false;
         plt.Axes.Right.IsVisible = false;
         plt.Axes.Bottom.TickLabelStyle.ForeColor = green;
+        
+        for (int i = 0; i < labels.Length; i++)
+        {
+            if (i % 2 != 0 && i != labels.Length - 1 && i != labels.Length - 2)
+                labels[i] = "";
+        }
         plt.Axes.Bottom.SetTicks(xs, labels);
 
         plt.XLabel("Date");
@@ -341,7 +351,7 @@ public class Service : IHostedService
 
         var fileName = $"steam_graph_{DateTime.UtcNow:yyyyMMdd}.png";
         var filePath = Path.Combine(AppContext.BaseDirectory, fileName);
-        plt.SavePng(filePath, 600, 300);
+        plt.SavePng(filePath, 900, 300);
 
         return filePath;
     }

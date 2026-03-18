@@ -20,7 +20,7 @@ public class ContentWebhook : IWebhook
     public async Task send(string content, JsonElement data)
     {
         var link = data.GetString();
-        if (content.StartsWith("7-Day Update Graph:") && content.Contains(".png"))
+        if (content.StartsWith("30-Day Update Graph:") && content.Contains(".png"))
         {
             var filePath = content.Split(':', 2)[1].Trim();
             if (File.Exists(filePath))
