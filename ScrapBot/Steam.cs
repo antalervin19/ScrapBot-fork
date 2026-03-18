@@ -4,6 +4,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SteamKit2;
+using ScottPlot;
+using System.Globalization;
 using static SteamKit2.SteamApps;
 
 namespace ScrapBot.Steam;
@@ -20,6 +22,8 @@ public class Options
 
 public class Service : IHostedService
 {
+    private List<(DateTime day, int updates)> updateHistory = new();
+    private string lastGraphPath = string.Empty;
     private Dictionary<uint, string> Apps = new() {
         {387990, "Scrap Mechanic"},
         {588870, "Scrap Mechanic Mod Tool"}
@@ -260,14 +264,100 @@ public class Service : IHostedService
                     logger.LogWarning("Webhook impl not found");
                     continue;
                 }
-
                 await impl.send(content, webhook.data);
             }
-
         }
 
+        UpdateGraphHistory();
+        var graphPath = GenerateGraph();
+        DeletePreviousGraphIfSameDay(graphPath);
+        foreach (var webhook in options.Webhooks)
+        {
+            Webhook.impl.TryGetValue(webhook.type, out var impl);
+            if (impl is null) continue;
+            await impl.send($"7-Day Update Graph: {graphPath}", webhook.data);
+        }
+        lastGraphPath = graphPath;
+    }
+    private void UpdateGraphHistory()
+    {
+        var today = DateTime.UtcNow.Date;
+        if (updateHistory.Count > 0 && updateHistory[^1].day == today)
+        {
+            updateHistory[^1] = (today, updateHistory[^1].updates + 1);
+        }
+        else
+        {
+            updateHistory.Add((today, 1));
+        }
+        if (updateHistory.Count > 7)
+            updateHistory.RemoveAt(0);
     }
 
+    private string GenerateGraph()
+    {
+        var days = updateHistory.Select(x => x.day).ToArray();
+        var updates = updateHistory.Select(x => x.updates).ToArray();
+
+        if (days.Length < 7)
+        {
+            var missing = 7 - days.Length;
+            var start = days.Length > 0 ? days[0].AddDays(-missing) : DateTime.UtcNow.Date.AddDays(-6);
+            var fillDays = Enumerable.Range(0, missing).Select(i => start.AddDays(i)).ToArray();
+
+            days = fillDays.Concat(days).ToArray();
+            updates = Enumerable.Repeat(0, missing).Concat(updates).ToArray();
+        }
+
+        double[] xs = Enumerable.Range(0, 7).Select(i => (double)i).ToArray();
+        double[] ys = updates.Select(x => (double)x).ToArray();
+        string[] labels = days.Select(d => d == DateTime.UtcNow.Date ? "Today" : d == DateTime.UtcNow.Date.AddDays(-1) ? "Yesterday" : d.Day.ToString()).ToArray();
+
+        var plt = new Plot();
+        var green = new ScottPlot.Color(0, 255, 120);
+        var line = plt.Add.Scatter(xs, ys);
+
+        line.Color = green;
+        line.LineWidth = 2;
+        line.MarkerSize = 6;
+        line.MarkerShape = MarkerShape.FilledCircle;
+        line.MarkerFillColor = green;
+        plt.FigureBackground.Color = ScottPlot.Colors.Transparent;
+        plt.DataBackground.Color = ScottPlot.Colors.Transparent;
+        plt.Grid.MajorLineColor = new ScottPlot.Color(0, 255, 120, 30);
+        plt.Axes.Left.IsVisible = false;
+        plt.Axes.Top.IsVisible = false;
+        plt.Axes.Right.IsVisible = false;
+        plt.Axes.Bottom.TickLabelStyle.ForeColor = green;
+        plt.Axes.Bottom.SetTicks(xs, labels);
+
+        plt.XLabel("Date");
+
+        Array.Reverse(xs);
+        Array.Reverse(ys);
+        Array.Reverse(labels);
+
+        plt.Axes.Bottom.SetTicks(xs, labels);
+
+        var fileName = $"steam_graph_{DateTime.UtcNow:yyyyMMdd}.png";
+        var filePath = Path.Combine(AppContext.BaseDirectory, fileName);
+        plt.SavePng(filePath, 600, 300);
+
+        return filePath;
+    }
+
+    private void DeletePreviousGraphIfSameDay(string currentPath)
+    {
+        if (!string.IsNullOrEmpty(lastGraphPath) && lastGraphPath != currentPath)
+        {
+            var lastDate = Path.GetFileNameWithoutExtension(lastGraphPath)?.Split('_').LastOrDefault();
+            var today = DateTime.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+            if (lastDate == today && File.Exists(lastGraphPath))
+            {
+                File.Delete(lastGraphPath);
+            }
+        }
+    }
 
     private async Task<KeyValue?> fetchPICS(uint appid)
     {
