@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using SteamKit2;
 using ScottPlot;
 using System.Globalization;
+using System.Text.Json;
 using static SteamKit2.SteamApps;
 
 namespace ScrapBot.Steam;
@@ -24,6 +25,7 @@ public class Service : IHostedService
 {
     private List<(DateTime day, int updates)> updateHistory = new();
     private string lastGraphPath = string.Empty;
+    private static readonly string historyFilePath = Path.Combine(AppContext.BaseDirectory, "graph_history.json");
     private Dictionary<uint, string> Apps = new() {
         {387990, "Scrap Mechanic"},
         {588870, "Scrap Mechanic Mod Tool"}
@@ -99,6 +101,8 @@ public class Service : IHostedService
     public Task StartAsync(CancellationToken cancellationToken)
     {
         logger.LogInformation("Starting");
+
+        LoadGraphHistory();
 
         var callbackTask = new Task(() =>
         {
@@ -292,6 +296,65 @@ public class Service : IHostedService
         }
         if (updateHistory.Count > 30)
             updateHistory.RemoveAt(0);
+
+        SaveGraphHistory();
+    }
+
+    private void SaveGraphHistory()
+    {
+        try
+        {
+            var serializable = updateHistory.Select(x => new GraphHistoryEntry
+            {
+                Day = x.day,
+                Updates = x.updates
+            }).ToList();
+
+            var json = JsonSerializer.Serialize(serializable, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(historyFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to save graph history to {Path}", historyFilePath);
+        }
+    }
+
+    private void LoadGraphHistory()
+    {
+        try
+        {
+            if (!File.Exists(historyFilePath))
+                return;
+
+            var json = File.ReadAllText(historyFilePath);
+            var loaded = JsonSerializer.Deserialize<List<GraphHistoryEntry>>(json);
+            if (loaded is null)
+                return;
+
+            updateHistory = loaded
+                .Where(x => x.Updates >= 0)
+                .GroupBy(x => x.Day.Date)
+                .Select(g => (day: g.Key, updates: g.Sum(e => e.Updates)))
+                .OrderBy(x => x.day)
+                .TakeLast(30)
+                .ToList();
+
+            logger.LogInformation("Loaded {Count} graph history entries from {Path}", updateHistory.Count, historyFilePath);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to load graph history from {Path}", historyFilePath);
+        }
+    }
+
+    private class GraphHistoryEntry
+    {
+        public DateTime Day { get; set; }
+        public int Updates { get; set; }
     }
 
     private string GenerateGraph()
@@ -313,7 +376,6 @@ public class Service : IHostedService
         double[] ys = updates.Select(x => (double)x).ToArray();
         string[] labels = days.Select(d =>
             d == DateTime.UtcNow.Date ? "Today" :
-            d == DateTime.UtcNow.Date.AddDays(-1) ? "Yesterday" :
             d.ToString("MM-dd")
         ).ToArray();
 
@@ -329,14 +391,41 @@ public class Service : IHostedService
         plt.FigureBackground.Color = ScottPlot.Colors.Transparent;
         plt.DataBackground.Color = ScottPlot.Colors.Transparent;
         plt.Grid.MajorLineColor = new ScottPlot.Color(0, 255, 120, 30);
-        plt.Axes.Left.IsVisible = false;
+
+        plt.Axes.Left.IsVisible = true;
+        plt.Axes.Left.TickLabelStyle.ForeColor = green;
+        plt.YLabel("Updates");
         plt.Axes.Top.IsVisible = false;
         plt.Axes.Right.IsVisible = false;
         plt.Axes.Bottom.TickLabelStyle.ForeColor = green;
-        
+
+
+        double yMax = Math.Max(ys.Max(), 1);
+
+        double[] YSteps = {10, 20, 50, 100, 200, 500};
+        double yAxisMax = yMax;
+        foreach (var step in YSteps)
+        {
+            if (yMax <= step)
+            {
+                yAxisMax = step;
+                break;
+            }
+        }
+        plt.Axes.Left.Min = 0;
+        plt.Axes.Left.Max = yAxisMax;
+
+        var yTicks = Enumerable.Range(0, (int)yAxisMax + 1)
+            .Where(i => i == 0 || i == 1 || i % 1 == 0 || i == 10 || i == 20 || i == 50 || i == 100 || i == 200 || i == 500)
+            .ToArray();
+        plt.Axes.Left.SetTicks(yTicks.Select(i => (double)i).ToArray(), yTicks.Select(i => i.ToString()).ToArray());
+
         for (int i = 0; i < labels.Length; i++)
         {
-            if (i % 2 != 0 && i != labels.Length - 1 && i != labels.Length - 2)
+            bool isFirst = i == 0;
+            bool isLast = labels[i] == "Today";
+            bool isNth = i % 5 == 0;
+            if (!(isFirst || isLast || isNth))
                 labels[i] = "";
         }
         plt.Axes.Bottom.SetTicks(xs, labels);
@@ -351,7 +440,7 @@ public class Service : IHostedService
 
         var fileName = $"steam_graph_{DateTime.UtcNow:yyyyMMdd}.png";
         var filePath = Path.Combine(AppContext.BaseDirectory, fileName);
-        plt.SavePng(filePath, 900, 300);
+        plt.SavePng(filePath, 900, 400);
 
         return filePath;
     }
