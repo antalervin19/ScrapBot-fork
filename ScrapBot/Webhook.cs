@@ -19,6 +19,31 @@ public class ContentWebhook : IWebhook
     HttpClient httpClient = new();
     public async Task send(string content, JsonElement data)
     {
+        var link = data.GetString();
+        if (content.StartsWith("30-Day Update Graph:") && content.Contains(".png"))
+        {
+            var filePath = content.Split(':', 2)[1].Trim();
+            if (File.Exists(filePath))
+            {
+                using var form = new MultipartFormDataContent();
+                var fileStream = File.OpenRead(filePath);
+                form.Add(new StreamContent(fileStream), "file", Path.GetFileName(filePath));
+                try
+                {
+                    var res = await httpClient.PostAsync(link, form);
+                    res.Dispose();
+                }
+                catch (Exception err)
+                {
+                    Console.WriteLine(err);
+                }
+                finally
+                {
+                    fileStream.Dispose();
+                }
+                return;
+            }
+        }
         using StringContent jsonContent = new(
             JsonSerializer.Serialize(new
             {
@@ -29,7 +54,6 @@ public class ContentWebhook : IWebhook
         );
         try
         {
-            var link = data.GetString();
             var res = await httpClient.PostAsync(link, jsonContent);
             res.Dispose();
         }
@@ -37,7 +61,6 @@ public class ContentWebhook : IWebhook
         {
             Console.WriteLine(err);
         }
-
     }
 }
 
