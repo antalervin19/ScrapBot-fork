@@ -282,6 +282,7 @@ public class Service : IHostedService
         }
         lastGraphPath = graphPath;
     }
+
     private void UpdateGraphHistory()
     {
         var today = DateTime.UtcNow.Date;
@@ -398,7 +399,6 @@ public class Service : IHostedService
         plt.Axes.Right.IsVisible = false;
         plt.Axes.Bottom.TickLabelStyle.ForeColor = green;
 
-
         double yMax = Math.Max(ys.Max(), 1);
 
         double[] YSteps = { 10, 20, 50, 100, 200, 500 };
@@ -414,10 +414,9 @@ public class Service : IHostedService
         plt.Axes.Left.Min = 0;
         plt.Axes.Left.Max = yAxisMax;
 
-        var yTicks = Enumerable.Range(0, (int)yAxisMax + 1)
-            .Where(i => i == 0 || i == 1 || i % 1 == 0 || i == 10 || i == 20 || i == 50 || i == 100 || i == 200 || i == 500)
-            .ToArray();
-        plt.Axes.Left.SetTicks(yTicks.Select(i => (double)i).ToArray(), yTicks.Select(i => i.ToString()).ToArray());
+        double[] fixedYTicks = { 0, 1, 5, 10, 20, 50, 100, 200, 500 };
+        var yTicks = fixedYTicks.Where(t => t <= yAxisMax).ToArray();
+        plt.Axes.Left.SetTicks(yTicks, yTicks.Select(t => ((int)t).ToString()).ToArray());
 
         for (int i = 0; i < labels.Length; i++)
         {
@@ -427,17 +426,11 @@ public class Service : IHostedService
             if (!(isFirst || isLast || isNth))
                 labels[i] = "";
         }
-        plt.Axes.Bottom.SetTicks(xs, labels);
 
         plt.XLabel("Date");
-
-        Array.Reverse(xs);
-        Array.Reverse(ys);
-        Array.Reverse(labels);
-
+        
         plt.Axes.Bottom.SetTicks(xs, labels);
 
-        var fileName = $"steam_graph_{DateTime.UtcNow:yyyyMMdd}.png";
         var filePath = $"./data/steam_graph.png";
         plt.SavePng(filePath, 900, 400);
 
