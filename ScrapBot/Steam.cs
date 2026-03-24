@@ -25,7 +25,7 @@ public class Service : IHostedService
 {
     private List<(DateTime day, int updates)> updateHistory = new();
     private string lastGraphPath = string.Empty;
-    private static readonly string historyFilePath = Path.Combine(AppContext.BaseDirectory, "graph_history.json");
+    private static readonly string historyFilePath = "./data/graph_history.json";
     private Dictionary<uint, string> Apps = new() {
         {387990, "Scrap Mechanic"},
         {588870, "Scrap Mechanic Mod Tool"}
@@ -274,12 +274,11 @@ public class Service : IHostedService
 
         UpdateGraphHistory();
         var graphPath = GenerateGraph();
-        DeleteLastGraph(graphPath);
         foreach (var webhook in options.Webhooks)
         {
             Webhook.impl.TryGetValue(webhook.type, out var impl);
             if (impl is null) continue;
-            await impl.send($"30-Day Update Graph: {graphPath}", webhook.data);
+            await impl.sendGraph(graphPath, webhook.data);
         }
         lastGraphPath = graphPath;
     }
@@ -402,7 +401,7 @@ public class Service : IHostedService
 
         double yMax = Math.Max(ys.Max(), 1);
 
-        double[] YSteps = {10, 20, 50, 100, 200, 500};
+        double[] YSteps = { 10, 20, 50, 100, 200, 500 };
         double yAxisMax = yMax;
         foreach (var step in YSteps)
         {
@@ -439,19 +438,12 @@ public class Service : IHostedService
         plt.Axes.Bottom.SetTicks(xs, labels);
 
         var fileName = $"steam_graph_{DateTime.UtcNow:yyyyMMdd}.png";
-        var filePath = Path.Combine(AppContext.BaseDirectory, fileName);
+        var filePath = $"./data/steam_graph.png";
         plt.SavePng(filePath, 900, 400);
 
         return filePath;
     }
 
-    private void DeleteLastGraph(string currentPath)
-    {
-        if (!string.IsNullOrEmpty(lastGraphPath) && lastGraphPath != currentPath && File.Exists(lastGraphPath))
-        {
-            File.Delete(lastGraphPath);
-        }
-    }
 
     private async Task<KeyValue?> fetchPICS(uint appid)
     {
