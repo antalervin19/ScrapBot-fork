@@ -55,7 +55,7 @@ public class DiscordWebhook : IWebhook
         form.Add(new StreamContent(fileStream), "file", Path.GetFileName(path));
         try
         {
-            var res = await httpClient.PostAsync("https://api.revolt.chat/channels/{target}/messages", form);
+            var res = await httpClient.PostAsync(link, form);
             res.Dispose();
         }
         catch (Exception err)
