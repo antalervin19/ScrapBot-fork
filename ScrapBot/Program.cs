@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System.Text.Json;
+using ScottPlot;
 
 namespace ScrapBot;
 
@@ -8,6 +9,7 @@ internal static class Program
 {
     internal static async Task Main(string[] args)
     {
+        Fonts.AddFontFile("Geist", "./Geist.ttf");
         var webhookFile = (new StreamReader("./webhooks.json")).ReadToEnd();
         var webhooks = JsonSerializer.Deserialize<List<WebhookFile>>(webhookFile);
 

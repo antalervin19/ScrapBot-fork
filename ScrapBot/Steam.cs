@@ -392,24 +392,26 @@ public class Service : IHostedService
         ).ToArray();
 
         var plt = new Plot();
+        var fg = new ScottPlot.Color("#d4d4d4");
+        var bg = new ScottPlot.Color("#0a0a0a");
         var line = plt.Add.Scatter(xs, ys);
 
-        line.Color = Colors.White;
+        plt.Font.Set("Geist");
+        line.Color = fg;
         line.LineWidth = 2;
         line.MarkerSize = 6;
         line.MarkerShape = MarkerShape.FilledCircle;
-        line.MarkerFillColor = Colors.White;
-        plt.FigureBackground.Color = ScottPlot.Colors.Transparent;
-        plt.DataBackground.Color = ScottPlot.Colors.Transparent;
-        plt.Grid.MajorLineColor = new ScottPlot.Color(0, 255, 120, 30);
+        line.MarkerFillColor = fg;
+        plt.Grid.MajorLineColor = new ScottPlot.Color("#300530");
 
         plt.Axes.Left.IsVisible = true;
-        plt.Axes.Left.TickLabelStyle.ForeColor = Colors.White;
+        plt.Axes.Left.TickLabelStyle.ForeColor = fg;
         plt.YLabel("Updates");
-        plt.Axes.Left.Label.ForeColor = Colors.White;
+        plt.Axes.Left.Label.ForeColor = fg;
         plt.Axes.Top.IsVisible = false;
         plt.Axes.Right.IsVisible = false;
-        plt.Axes.Bottom.TickLabelStyle.ForeColor = Colors.White;
+        plt.Axes.Bottom.TickLabelStyle.ForeColor = fg;
+        plt.Axes.Color(fg);
 
         double yMinData = ys.Min();
         double yMaxData = ys.Max();
@@ -433,10 +435,12 @@ public class Service : IHostedService
         }
 
         plt.XLabel("Date");
-        plt.Axes.Bottom.Label.ForeColor = Colors.White;
+        plt.Axes.Bottom.Label.ForeColor = fg;
         plt.Axes.Bottom.SetTicks(xs, labels);
 
-        plt.FigureBackground.Color = Colors.Black;
+        plt.FigureBackground.Color = bg;
+        plt.DataBackground.Color = bg;
+        plt.DataBorder.Color = fg;
 
         var filePath = $"./data/steam_graph.png";
         plt.SavePng(filePath, 900, 400);
