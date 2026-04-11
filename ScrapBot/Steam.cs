@@ -255,44 +255,56 @@ public class Service : IHostedService
         if (callback.CurrentChangeNumber > lastChangeNumber) lastChangeNumber = callback.CurrentChangeNumber;
         var apps = callback.AppChanges.Where(app => Apps.ContainsKey(app.Value.ID)).ToArray();
         if (apps.Length <= 0) return;
-        foreach (var (id, app) in apps)
-        {
-            if (await shouldSkipPICSChange(id)) continue;
-            Apps.TryGetValue(app.ID, out var appName);
-            var content = $"New SteamDB change detected! `{appName} ({app.ID})`  \nhttps://steamdb.info/app/{app.ID}/history/?changeid={app.ChangeNumber}";
-            foreach (var webhook in options.Webhooks)
-            {
-                Webhook.impl.TryGetValue(webhook.type, out var impl);
-                if (impl is null)
-                {
-                    logger.LogWarning("Webhook impl not found");
-                    continue;
-                }
-                await impl.send(content, webhook.data);
-            }
-        }
-
-        UpdateGraphHistory();
-        var graphPath = GenerateGraph();
+        var changeDetected = false;
+        var changeCount = 0;
+        var updatedGraph = false;
+        string? graphPath = null;
         foreach (var webhook in options.Webhooks)
         {
             Webhook.impl.TryGetValue(webhook.type, out var impl);
-            if (impl is null) continue;
-            await impl.sendGraph(graphPath, webhook.data);
+            if (impl is null)
+            {
+                logger.LogWarning($"Webhook impl not found: {webhook.type}");
+                continue;
+            }
+            foreach (var (id, app) in apps)
+            {
+                if (await shouldSkipPICSChange(id)) continue;
+                changeDetected = true;
+                if (!updatedGraph)
+                    changeCount += 1;
+                Apps.TryGetValue(app.ID, out var appName);
+                var content = $"New SteamDB change detected! `{appName} ({app.ID})`  \nhttps://steamdb.info/app/{app.ID}/history/?changeid={app.ChangeNumber}";
+                await impl.send(content, webhook.data);
+            }
+            if (!changeDetected) continue;
+            if (!updatedGraph)
+            {
+                UpdateGraphHistory(changeCount);
+                graphPath = GenerateGraph();
+                updatedGraph = true;
+            }
+            if (graphPath is not null)
+            {
+                await impl.sendGraph(graphPath, webhook.data);
+                lastGraphPath = graphPath;
+            }
         }
-        lastGraphPath = graphPath;
     }
 
-    private void UpdateGraphHistory()
+    private void UpdateGraphHistory(int changeCount)
     {
+        if (changeCount <= 0)
+            return;
+
         var today = DateTime.UtcNow.Date;
         if (updateHistory.Count > 0 && updateHistory[^1].day == today)
         {
-            updateHistory[^1] = (today, updateHistory[^1].updates + 1);
+            updateHistory[^1] = (today, updateHistory[^1].updates + changeCount);
         }
         else
         {
-            updateHistory.Add((today, 1));
+            updateHistory.Add((today, changeCount));
         }
         if (updateHistory.Count > 30)
             updateHistory.RemoveAt(0);
@@ -380,42 +392,35 @@ public class Service : IHostedService
         ).ToArray();
 
         var plt = new Plot();
-        var green = new ScottPlot.Color(0, 255, 120);
         var line = plt.Add.Scatter(xs, ys);
 
-        line.Color = green;
+        line.Color = Colors.White;
         line.LineWidth = 2;
         line.MarkerSize = 6;
         line.MarkerShape = MarkerShape.FilledCircle;
-        line.MarkerFillColor = green;
+        line.MarkerFillColor = Colors.White;
         plt.FigureBackground.Color = ScottPlot.Colors.Transparent;
         plt.DataBackground.Color = ScottPlot.Colors.Transparent;
         plt.Grid.MajorLineColor = new ScottPlot.Color(0, 255, 120, 30);
 
         plt.Axes.Left.IsVisible = true;
-        plt.Axes.Left.TickLabelStyle.ForeColor = green;
+        plt.Axes.Left.TickLabelStyle.ForeColor = Colors.White;
         plt.YLabel("Updates");
+        plt.Axes.Left.Label.ForeColor = Colors.White;
         plt.Axes.Top.IsVisible = false;
         plt.Axes.Right.IsVisible = false;
-        plt.Axes.Bottom.TickLabelStyle.ForeColor = green;
+        plt.Axes.Bottom.TickLabelStyle.ForeColor = Colors.White;
 
-        double yMax = Math.Max(ys.Max(), 1);
-
-        double[] YSteps = { 10, 20, 50, 100, 200, 500 };
-        double yAxisMax = yMax;
-        foreach (var step in YSteps)
-        {
-            if (yMax <= step)
-            {
-                yAxisMax = step;
-                break;
-            }
-        }
-        plt.Axes.Left.Min = 0;
+        double yMinData = ys.Min();
+        double yMaxData = ys.Max();
+        (double yAxisMin, double yAxisMax, double yTickStep) = GetYAxisScale(yMinData, yMaxData);
+        plt.Axes.Left.Min = yAxisMin;
         plt.Axes.Left.Max = yAxisMax;
 
-        double[] fixedYTicks = { 0, 1, 5, 10, 20, 50, 100, 200, 500 };
-        var yTicks = fixedYTicks.Where(t => t <= yAxisMax).ToArray();
+        int tickCount = (int)Math.Round((yAxisMax - yAxisMin) / yTickStep) + 1;
+        var yTicks = Enumerable.Range(0, tickCount)
+            .Select(i => yAxisMin + (i * yTickStep))
+            .ToArray();
         plt.Axes.Left.SetTicks(yTicks, yTicks.Select(t => ((int)t).ToString()).ToArray());
 
         for (int i = 0; i < labels.Length; i++)
@@ -428,13 +433,56 @@ public class Service : IHostedService
         }
 
         plt.XLabel("Date");
-        
+        plt.Axes.Bottom.Label.ForeColor = Colors.White;
         plt.Axes.Bottom.SetTicks(xs, labels);
+
+        plt.FigureBackground.Color = Colors.Black;
 
         var filePath = $"./data/steam_graph.png";
         plt.SavePng(filePath, 900, 400);
 
         return filePath;
+    }
+
+    private static (double Min, double Max, double Step) GetYAxisScale(double yMin, double yMax)
+    {
+        if (yMin == yMax)
+        {
+            double padding = Math.Max(1, yMax * 0.2);
+            yMin = Math.Max(0, yMin - padding);
+            yMax += padding;
+        }
+
+        double range = Math.Max(yMax - yMin, 1);
+        double paddingSize = Math.Max(range * 0.1, 0.5);
+        double paddedMin = Math.Max(0, yMin - paddingSize);
+        double paddedMax = yMax + paddingSize;
+
+        double step = GetNiceTickStep(paddedMax - paddedMin);
+        double axisMin = Math.Floor(paddedMin / step) * step;
+        double axisMax = Math.Ceiling(paddedMax / step) * step;
+
+        if (axisMin == axisMax)
+            axisMax = axisMin + step;
+
+        return (axisMin, axisMax, step);
+    }
+
+    private static double GetNiceTickStep(double range)
+    {
+        const int targetTickCount = 6;
+        double roughStep = range / targetTickCount;
+        double magnitude = Math.Pow(10, Math.Floor(Math.Log10(Math.Max(roughStep, 1))));
+        double normalizedStep = roughStep / magnitude;
+
+        if (normalizedStep <= 1)
+            return magnitude;
+        if (normalizedStep <= 2)
+            return 2 * magnitude;
+        if (normalizedStep <= 5)
+            return 5 * magnitude;
+
+        return 10 * magnitude;
     }
 
 
