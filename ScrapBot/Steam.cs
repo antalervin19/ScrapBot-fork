@@ -8,6 +8,7 @@ using ScottPlot;
 using System.Globalization;
 using System.Text.Json;
 using static SteamKit2.SteamApps;
+using ProtoBuf;
 
 namespace ScrapBot.Steam;
 
@@ -24,7 +25,6 @@ public class Options
 public class Service : IHostedService
 {
     private List<(DateTime day, int updates)> updateHistory = new();
-    private string lastGraphPath = string.Empty;
     private static readonly string historyFilePath = "./data/graph_history.json";
     private Dictionary<uint, string> Apps = new() {
         {387990, "Scrap Mechanic"},
@@ -42,6 +42,7 @@ public class Service : IHostedService
     private readonly CallbackManager callbackManager;
 
     private readonly Timer timer;
+    private readonly Timer midnightTimer;
 
     private uint lastChangeNumber;
 
@@ -62,12 +63,14 @@ public class Service : IHostedService
 
     private readonly HttpClient httpClient = new();
 
+
     public Service(ILogger<Service> logger, IOptions<Options> options)
     {
         this.logger = logger;
         this.options = options.Value;
 
         timer = new Timer(TimerCallback, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        midnightTimer = new Timer(MidnightTimerCallback, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 
         CheckAnon();
 
@@ -103,6 +106,7 @@ public class Service : IHostedService
         logger.LogInformation("Starting");
 
         LoadGraphHistory();
+        ScheduleMidnightCallback();
 
         var callbackTask = new Task(() =>
         {
@@ -128,6 +132,8 @@ public class Service : IHostedService
         logger.LogInformation("Stopping");
 
         isStopping = true;
+        timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        midnightTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 
         steamClient.Disconnect();
 
@@ -144,7 +150,7 @@ public class Service : IHostedService
 
         CheckAnon();
 
-        logger.LogInformation("Logging On{}", isAnon ? " Anonymously" : string.Empty);
+        logger.LogInformation("Logging On {}", isAnon ? " Anonymously" : string.Empty);
 
         if (isAnon)
         {
@@ -204,6 +210,40 @@ public class Service : IHostedService
         logger.LogInformation("Logged Off");
     }
 
+    private void ScheduleMidnightCallback()
+    {
+        var now = DateTime.UtcNow;
+        var nextMidnightUtc = now.Date.AddDays(1);
+        midnightTimer.Change(nextMidnightUtc - now, Timeout.InfiniteTimeSpan);
+    }
+
+    private async void MidnightTimerCallback(object? _)
+    {
+        if (isStopping) return;
+
+        try
+        {
+            foreach (var webhook in options.Webhooks)
+            {
+                Webhook.impl.TryGetValue(webhook.type, out var impl);
+                if (impl is null)
+                {
+                    logger.LogWarning($"Webhook impl not found {impl}");
+                    continue;
+                }
+
+                var graphPath = GenerateGraph();
+                await impl.sendGraph(graphPath, webhook.data);
+            }
+        } finally
+        {
+            if (!isStopping)
+            {
+                ScheduleMidnightCallback();
+            }
+        }
+    }
+
     private async Task<bool> shouldSkipPICSChange(uint appid)
     {
         var pics = await fetchPICS(appid);
@@ -255,41 +295,25 @@ public class Service : IHostedService
         if (callback.CurrentChangeNumber > lastChangeNumber) lastChangeNumber = callback.CurrentChangeNumber;
         var apps = callback.AppChanges.Where(app => Apps.ContainsKey(app.Value.ID)).ToArray();
         if (apps.Length <= 0) return;
-        var changeDetected = false;
-        var changeCount = 0;
-        var updatedGraph = false;
-        string? graphPath = null;
-        foreach (var webhook in options.Webhooks)
+        var smChanges = 0;
+        foreach (var (id, app) in apps)
         {
-            Webhook.impl.TryGetValue(webhook.type, out var impl);
-            if (impl is null)
+            if (await shouldSkipPICSChange(id)) continue;
+            if (app.ID == 387990) smChanges++;
+           Apps.TryGetValue(app.ID, out var appName);
+            var content = $"New SteamDB change detected! `{appName} ({app.ID})`  \nhttps://steamdb.info/app/{app.ID}/history/?changeid={app.ChangeNumber}"; 
+            foreach (var webhook in options.Webhooks)
             {
-                logger.LogWarning($"Webhook impl not found: {webhook.type}");
-                continue;
-            }
-            foreach (var (id, app) in apps)
-            {
-                if (await shouldSkipPICSChange(id)) continue;
-                changeDetected = true;
-                if (!updatedGraph)
-                    changeCount += 1;
-                Apps.TryGetValue(app.ID, out var appName);
-                var content = $"New SteamDB change detected! `{appName} ({app.ID})`  \nhttps://steamdb.info/app/{app.ID}/history/?changeid={app.ChangeNumber}";
+                Webhook.impl.TryGetValue(webhook.type, out var impl);
+                if (impl is null)
+                {
+                    logger.LogWarning($"Webhook impl not found: {webhook.type}");
+                    continue;
+                }
                 await impl.send(content, webhook.data);
             }
-            if (!changeDetected) continue;
-            if (!updatedGraph)
-            {
-                UpdateGraphHistory(changeCount);
-                graphPath = GenerateGraph();
-                updatedGraph = true;
-            }
-            if (graphPath is not null)
-            {
-                await impl.sendGraph(graphPath, webhook.data);
-                lastGraphPath = graphPath;
-            }
         }
+        UpdateGraphHistory(smChanges);
     }
 
     private void UpdateGraphHistory(int changeCount)
