@@ -8,7 +8,6 @@ using ScottPlot;
 using System.Globalization;
 using System.Text.Json;
 using static SteamKit2.SteamApps;
-using ProtoBuf;
 
 namespace ScrapBot.Steam;
 
@@ -24,6 +23,8 @@ public class Options
 
 public class Service : IHostedService
 {
+    private static readonly TimeZoneInfo swedishTimeZone = GetSwedishTimeZone();
+
     private List<(DateTime day, int updates)> updateHistory = new();
     private static readonly string historyFilePath = "./data/graph_history.json";
     private Dictionary<uint, string> Apps = new() {
@@ -212,9 +213,33 @@ public class Service : IHostedService
 
     private void ScheduleMidnightCallback()
     {
-        var now = DateTime.UtcNow;
-        var nextMidnightUtc = now.Date.AddDays(1);
-        midnightTimer.Change(nextMidnightUtc - now, Timeout.InfiniteTimeSpan);
+        var nowUtc = DateTimeOffset.UtcNow;
+        var nowSwedish = TimeZoneInfo.ConvertTime(nowUtc, swedishTimeZone);
+        var nextMidnightSwedish = new DateTimeOffset(
+            nowSwedish.Year,
+            nowSwedish.Month,
+            nowSwedish.Day,
+            0, 0, 0,
+            nowSwedish.Offset).AddDays(1);
+        var nextMidnightUtc = TimeZoneInfo.ConvertTime(nextMidnightSwedish, TimeZoneInfo.Utc);
+
+        midnightTimer.Change(nextMidnightUtc - nowUtc, Timeout.InfiniteTimeSpan);
+    }
+
+    private static TimeZoneInfo GetSwedishTimeZone()
+    {
+        foreach (var timeZoneId in new[] { "Europe/Stockholm", "W. Europe Standard Time" })
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+            }
+            catch (TimeZoneNotFoundException)
+            {
+            }
+        }
+
+        throw new TimeZoneNotFoundException("Could not resolve the Swedish time zone.");
     }
 
     private async void MidnightTimerCallback(object? _)

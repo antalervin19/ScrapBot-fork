@@ -19,6 +19,7 @@ public interface IWebhook
 
 public class DiscordWebhook : IWebhook
 {
+    static int suppress_notifs = 1 << 12;
     HttpClient httpClient = new();
     public async Task send(string content, JsonElement data)
     {
@@ -53,6 +54,15 @@ public class DiscordWebhook : IWebhook
         using var form = new MultipartFormDataContent();
         var fileStream = File.OpenRead(path);
         form.Add(new StreamContent(fileStream), "file", Path.GetFileName(path));
+        using StringContent jsonContent = new(
+            JsonSerializer.Serialize(new
+            {
+                flags = suppress_notifs
+            }),
+            Encoding.UTF8,
+            "application/json"
+        );
+        form.Add(jsonContent, "payload_json");
         try
         {
             var res = await httpClient.PostAsync(link, form);
