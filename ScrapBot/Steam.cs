@@ -279,46 +279,7 @@ public class Service : IHostedService
     private async Task<bool> shouldSkipPICSChange(uint appid)
     {
         var pics = await fetchPICS(appid);
-        if (pics is null) return false;
-        var ratingCurrent = pics["common"]["review_percentage"]?.Value;
-        var tagsCurrent = pics["common"]["store_tags"].ToDict();
-        if (ratingCurrent is not null && steamRating[appid] != ratingCurrent)
-        {
-            steamRating[appid] = ratingCurrent;
-            return true;
-        }
-
-        if (tagsCurrent is not null)
-        {
-            if (!storeTags.ContainsKey(appid)) return false;
-
-            var tagsOld = storeTags[appid];
-
-            var diffKeys = false;
-            var sameValues = tagsCurrent.Values.All(tagsOld.Values.Contains);
-            if (!sameValues)
-            {
-                storeTags[appid] = tagsCurrent;
-                return true;
-            }
-
-            foreach (var (k, v) in tagsCurrent)
-            {
-                tagsOld.TryGetValue(k, out var v2);
-                if (v != v2)
-                {
-                    diffKeys = true;
-                    break;
-                }
-            }
-            if (tagsCurrent.Count != tagsOld.Count || diffKeys)
-            {
-                storeTags[appid] = tagsCurrent;
-                return true;
-            }
-
-        }
-        return false;
+        return PICSChangeLogic.ShouldSkipChange(appid, pics, steamRating, storeTags);
     }
 
     private async void OnPICSChanges(SteamApps.PICSChangesCallback callback)
@@ -332,8 +293,8 @@ public class Service : IHostedService
         {
             if (await shouldSkipPICSChange(id)) continue;
             if (app.ID == 387990) smChanges++;
-           Apps.TryGetValue(app.ID, out var appName);
-            var content = $"New SteamDB change detected! `{appName} ({app.ID})`  \nhttps://steamdb.info/app/{app.ID}/history/?changeid={app.ChangeNumber}"; 
+            Apps.TryGetValue(app.ID, out var appName);
+            var content = $"New SteamDB change detected! `{appName} ({app.ID})`  \nhttps://steamdb.info/app/{app.ID}/history/?changeid={app.ChangeNumber}";
             foreach (var webhook in options.Webhooks)
             {
                 Webhook.impl.TryGetValue(webhook.type, out var impl);
@@ -350,18 +311,7 @@ public class Service : IHostedService
 
     private void UpdateGraphHistory(int changeCount)
     {
-        var today = DateTime.UtcNow.Date;
-        if (updateHistory.Count > 0 && updateHistory[^1].day == today)
-        {
-            updateHistory[^1] = (today, updateHistory[^1].updates + changeCount);
-        }
-        else
-        {
-            updateHistory.Add((today, changeCount));
-        }
-        if (updateHistory.Count > 30)
-            updateHistory.RemoveAt(0);
-
+        GraphHistory.Update(updateHistory, DateTime.UtcNow.Date, changeCount);
         SaveGraphHistory();
     }
 
@@ -400,26 +350,7 @@ public class Service : IHostedService
             if (loaded is null)
                 return;
 
-            updateHistory = loaded
-                .Where(x => x.Updates >= 0)
-                .GroupBy(x => x.Day.Date)
-                .Select(g => (day: g.Key, updates: g.Sum(e => e.Updates)))
-                .OrderBy(x => x.day)
-                .ToList();
-
-            if (updateHistory.Count > 0)
-            {
-                var normalized = new List<(DateTime day, int updates)>();
-                var endDay = DateTime.UtcNow.Date;
-
-                for (var day = updateHistory[0].day; day <= endDay; day = day.AddDays(1))
-                {
-                    var entry = updateHistory.FirstOrDefault(x => x.day == day);
-                    normalized.Add((day, entry == default ? 0 : entry.updates));
-                }
-
-                updateHistory = normalized.TakeLast(30).ToList();
-            }
+            updateHistory = GraphHistory.Normalize(loaded, DateTime.UtcNow.Date);
 
             logger.LogInformation("Loaded {Count} graph history entries from {Path}", updateHistory.Count, historyFilePath);
         }
@@ -427,12 +358,6 @@ public class Service : IHostedService
         {
             logger.LogWarning(ex, "Failed to load graph history from {Path}", historyFilePath);
         }
-    }
-
-    private class GraphHistoryEntry
-    {
-        public DateTime Day { get; set; }
-        public int Updates { get; set; }
     }
 
     private string GenerateGraph()
@@ -481,7 +406,7 @@ public class Service : IHostedService
 
         double yMinData = ys.Min();
         double yMaxData = ys.Max();
-        (double yAxisMin, double yAxisMax, double yTickStep) = GetYAxisScale(yMinData, yMaxData);
+        (double yAxisMin, double yAxisMax, double yTickStep) = GraphScale.GetYAxisScale(yMinData, yMaxData);
         plt.Axes.Left.Min = yAxisMin;
         plt.Axes.Left.Max = yAxisMax;
 
@@ -513,48 +438,6 @@ public class Service : IHostedService
 
         return filePath;
     }
-
-    private static (double Min, double Max, double Step) GetYAxisScale(double yMin, double yMax)
-    {
-        if (yMin == yMax)
-        {
-            double padding = Math.Max(1, yMax * 0.2);
-            yMin = Math.Max(0, yMin - padding);
-            yMax += padding;
-        }
-
-        double range = Math.Max(yMax - yMin, 1);
-        double paddingSize = Math.Max(range * 0.1, 0.5);
-        double paddedMin = Math.Max(0, yMin - paddingSize);
-        double paddedMax = yMax + paddingSize;
-
-        double step = GetNiceTickStep(paddedMax - paddedMin);
-        double axisMin = Math.Floor(paddedMin / step) * step;
-        double axisMax = Math.Ceiling(paddedMax / step) * step;
-
-        if (axisMin == axisMax)
-            axisMax = axisMin + step;
-
-        return (axisMin, axisMax, step);
-    }
-
-    private static double GetNiceTickStep(double range)
-    {
-        const int targetTickCount = 6;
-        double roughStep = range / targetTickCount;
-        double magnitude = Math.Pow(10, Math.Floor(Math.Log10(Math.Max(roughStep, 1))));
-        double normalizedStep = roughStep / magnitude;
-
-        if (normalizedStep <= 1)
-            return magnitude;
-        if (normalizedStep <= 2)
-            return 2 * magnitude;
-        if (normalizedStep <= 5)
-            return 5 * magnitude;
-
-        return 10 * magnitude;
-    }
-
 
     private async Task<KeyValue?> fetchPICS(uint appid)
     {

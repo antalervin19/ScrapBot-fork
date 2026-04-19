@@ -1,0 +1,29 @@
+name: .NET Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore ScrapBot.sln
+
+      - name: Build
+        run: dotnet build ScrapBot.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test ScrapBot.sln --configuration Release --no-build
