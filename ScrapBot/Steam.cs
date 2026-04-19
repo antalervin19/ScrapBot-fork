@@ -251,6 +251,7 @@ public class Service : IHostedService
             var today = DateTime.UtcNow.Date;
             if (updateHistory.Count <= 0 || updateHistory[^1].day != today)
             {
+                UpdateGraphHistory(0);
                 ScheduleMidnightCallback();
                 return;
             }
@@ -349,9 +350,6 @@ public class Service : IHostedService
 
     private void UpdateGraphHistory(int changeCount)
     {
-        if (changeCount <= 0)
-            return;
-
         var today = DateTime.UtcNow.Date;
         if (updateHistory.Count > 0 && updateHistory[^1].day == today)
         {
@@ -407,8 +405,21 @@ public class Service : IHostedService
                 .GroupBy(x => x.Day.Date)
                 .Select(g => (day: g.Key, updates: g.Sum(e => e.Updates)))
                 .OrderBy(x => x.day)
-                .TakeLast(30)
                 .ToList();
+
+            if (updateHistory.Count > 0)
+            {
+                var normalized = new List<(DateTime day, int updates)>();
+                var endDay = DateTime.UtcNow.Date;
+
+                for (var day = updateHistory[0].day; day <= endDay; day = day.AddDays(1))
+                {
+                    var entry = updateHistory.FirstOrDefault(x => x.day == day);
+                    normalized.Add((day, entry == default ? 0 : entry.updates));
+                }
+
+                updateHistory = normalized.TakeLast(30).ToList();
+            }
 
             logger.LogInformation("Loaded {Count} graph history entries from {Path}", updateHistory.Count, historyFilePath);
         }
