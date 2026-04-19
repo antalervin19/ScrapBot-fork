@@ -248,6 +248,12 @@ public class Service : IHostedService
 
         try
         {
+            var today = DateTime.UtcNow.Date;
+            if (updateHistory.Count <= 0 || updateHistory[^1].day != today)
+            {
+                ScheduleMidnightCallback();
+                return;
+            }
             foreach (var webhook in options.Webhooks)
             {
                 Webhook.impl.TryGetValue(webhook.type, out var impl);
