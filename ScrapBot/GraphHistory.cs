@@ -57,6 +57,17 @@ internal static class GraphHistory
             history.RemoveAt(0);
         }
     }
+
+    internal static bool ShouldSendMidnightGraph(
+        List<(DateTime day, int updates)> history,
+        DateTime today)
+    {
+        today = today.Date;
+
+        return history.Count > 0
+            && history[^1].day == today
+            && history[^1].updates > 0;
+    }
 }
 
 internal static class GraphScale

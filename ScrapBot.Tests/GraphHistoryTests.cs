@@ -68,4 +68,34 @@ public class GraphHistoryTests
         Assert.Equal((start.AddDays(1), 1), history[0]);
         Assert.Equal((start.AddDays(30), 99), history[^1]);
     }
+
+    [Fact]
+    public void ShouldSendMidnightGraph_ReturnsFalseWhenTodayHasNoUpdates()
+    {
+        var today = new DateTime(2026, 04, 23);
+        var history = new List<(DateTime day, int updates)>
+        {
+            (today.AddDays(-1), 4),
+            (today, 0)
+        };
+
+        var result = GraphHistory.ShouldSendMidnightGraph(history, today);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void ShouldSendMidnightGraph_ReturnsTrueWhenTodayHasUpdates()
+    {
+        var today = new DateTime(2026, 04, 23);
+        var history = new List<(DateTime day, int updates)>
+        {
+            (today.AddDays(-1), 4),
+            (today, 2)
+        };
+
+        var result = GraphHistory.ShouldSendMidnightGraph(history, today);
+
+        Assert.True(result);
+    }
 }

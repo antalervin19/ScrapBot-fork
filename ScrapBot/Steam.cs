@@ -249,12 +249,13 @@ public class Service : IHostedService
         try
         {
             var today = DateTime.UtcNow.Date;
-            if (updateHistory.Count <= 0 || updateHistory[^1].day != today)
+            if (!GraphHistory.ShouldSendMidnightGraph(updateHistory, today))
             {
                 UpdateGraphHistory(0);
                 ScheduleMidnightCallback();
                 return;
             }
+
             foreach (var webhook in options.Webhooks)
             {
                 Webhook.impl.TryGetValue(webhook.type, out var impl);
