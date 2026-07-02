@@ -40,6 +40,26 @@ public class GraphHistoryTests
     }
 
     [Fact]
+    public void NormalizeByApp_GroupsLegacyAndAppSpecificEntries()
+    {
+        var endDay = new DateTime(2026, 04, 19);
+        var loaded = new[]
+        {
+            new GraphHistoryEntry { Day = endDay.AddDays(-1), Updates = 1 },
+            new GraphHistoryEntry { AppId = 588870, Day = endDay.AddDays(-1), Updates = 2 },
+            new GraphHistoryEntry { AppId = 588870, Day = endDay, Updates = 3 }
+        };
+
+        var normalized = GraphHistory.NormalizeByApp(loaded, endDay);
+
+        Assert.True(normalized.ContainsKey(387990));
+        Assert.True(normalized.ContainsKey(588870));
+        Assert.Equal(1, normalized[387990].Single(x => x.day == endDay.AddDays(-1)).updates);
+        Assert.Equal(2, normalized[588870].Single(x => x.day == endDay.AddDays(-1)).updates);
+        Assert.Equal(3, normalized[588870].Single(x => x.day == endDay).updates);
+    }
+
+    [Fact]
     public void Update_IncrementsExistingDay()
     {
         var day = new DateTime(2026, 04, 19);

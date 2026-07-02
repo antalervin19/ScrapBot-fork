@@ -24,12 +24,21 @@ public class Options
 public class Service : IHostedService
 {
     private static readonly TimeZoneInfo swedishTimeZone = GetSwedishTimeZone();
+    private static readonly uint gameAppId = 387990;
+    private static readonly uint modToolAppId = 588870;
+    private static readonly uint[] graphAppIds = [gameAppId, modToolAppId];
+    private static readonly ScottPlot.Color gameGraphColor = new("#ff9800");
+    private static readonly ScottPlot.Color modToolGraphColor = new("#4caf50");
 
-    private List<(DateTime day, int updates)> updateHistory = new();
+    private Dictionary<uint, List<(DateTime day, int updates)>> updateHistoryByApp = new()
+    {
+        { gameAppId, new() },
+        { modToolAppId, new() }
+    };
     private static readonly string historyFilePath = "./data/graph_history.json";
     private Dictionary<uint, string> Apps = new() {
-        {387990, "Scrap Mechanic"},
-        {588870, "Scrap Mechanic Mod Tool"}
+        {gameAppId, "Scrap Mechanic"},
+        {modToolAppId, "Scrap Mechanic Mod Tool"}
     };
 
 
@@ -54,12 +63,12 @@ public class Service : IHostedService
     private int reconnectAttempts;
 
     private Dictionary<uint, Dictionary<string, string>> storeTags = new() {
-        {387990, new Dictionary<string,string>()},
-        {588870, new Dictionary<string, string>()}
+        {gameAppId, new Dictionary<string,string>()},
+        {modToolAppId, new Dictionary<string, string>()}
     };
     private Dictionary<uint, string?> steamRating = new() {
-        {387990, null},
-        {588870, null}
+        {gameAppId, null},
+        {modToolAppId, null}
     };
 
     private readonly HttpClient httpClient = new();
@@ -249,9 +258,13 @@ public class Service : IHostedService
         try
         {
             var today = DateTime.UtcNow.Date;
-            if (!GraphHistory.ShouldSendMidnightGraph(updateHistory, today))
+            if (!graphAppIds.Any(appId => GraphHistory.ShouldSendMidnightGraph(GetHistory(appId), today)))
             {
-                UpdateGraphHistory(0);
+                foreach (var appId in graphAppIds)
+                {
+                    UpdateGraphHistory(appId, 0);
+                }
+
                 ScheduleMidnightCallback();
                 return;
             }
@@ -277,6 +290,58 @@ public class Service : IHostedService
         }
     }
 
+    internal async Task SendGraphTestAsync(bool useSampleData = false)
+    {
+        if (useSampleData)
+        {
+            SeedSampleGraphHistory();
+        }
+        else
+        {
+            LoadGraphHistory();
+        }
+
+        foreach (var webhook in options.Webhooks)
+        {
+            Webhook.impl.TryGetValue(webhook.type, out var impl);
+            if (impl is null)
+            {
+                logger.LogWarning($"Webhook impl not found {webhook.type}");
+                continue;
+            }
+
+            var graphPath = GenerateGraph();
+            await impl.sendGraph(graphPath, webhook.data);
+        }
+
+        logger.LogInformation("Sent graph test to {Count} webhook(s)", options.Webhooks.Count);
+    }
+
+    private void SeedSampleGraphHistory()
+    {
+        var endDay = DateTime.UtcNow.Date;
+
+        updateHistoryByApp = new Dictionary<uint, List<(DateTime day, int updates)>>
+        {
+            {
+                gameAppId,
+                Enumerable.Range(0, 30)
+                    .Select(i => (
+                        day: endDay.AddDays(-(29 - i)),
+                        updates: i % 5 == 0 ? 4 : i % 3))
+                    .ToList()
+            },
+            {
+                modToolAppId,
+                Enumerable.Range(0, 30)
+                    .Select(i => (
+                        day: endDay.AddDays(-(29 - i)),
+                        updates: i % 4 == 0 ? 1 : (i + 1) % 4))
+                    .ToList()
+            }
+        };
+    }
+
     private async Task<bool> shouldSkipPICSChange(uint appid)
     {
         var pics = await fetchPICS(appid);
@@ -289,11 +354,12 @@ public class Service : IHostedService
         if (callback.CurrentChangeNumber > lastChangeNumber) lastChangeNumber = callback.CurrentChangeNumber;
         var apps = callback.AppChanges.Where(app => Apps.ContainsKey(app.Value.ID)).ToArray();
         if (apps.Length <= 0) return;
-        var smChanges = 0;
+        var changesByApp = new Dictionary<uint, int>();
         foreach (var (id, app) in apps)
         {
             if (await shouldSkipPICSChange(id)) continue;
-            if (app.ID == 387990) smChanges++;
+            changesByApp.TryGetValue(app.ID, out var changeCount);
+            changesByApp[app.ID] = changeCount + 1;
             Apps.TryGetValue(app.ID, out var appName);
             var content = $"New SteamDB change detected! `{appName} ({app.ID})`  \nhttps://steamdb.info/app/{app.ID}/history/?changeid={app.ChangeNumber}";
             foreach (var webhook in options.Webhooks)
@@ -307,12 +373,27 @@ public class Service : IHostedService
                 await impl.send(content, webhook.data);
             }
         }
-        UpdateGraphHistory(smChanges);
+
+        foreach (var (appId, changeCount) in changesByApp)
+        {
+            UpdateGraphHistory(appId, changeCount);
+        }
     }
 
-    private void UpdateGraphHistory(int changeCount)
+    private List<(DateTime day, int updates)> GetHistory(uint appId)
     {
-        GraphHistory.Update(updateHistory, DateTime.UtcNow.Date, changeCount);
+        if (!updateHistoryByApp.TryGetValue(appId, out var history))
+        {
+            history = new List<(DateTime day, int updates)>();
+            updateHistoryByApp[appId] = history;
+        }
+
+        return history;
+    }
+
+    private void UpdateGraphHistory(uint appId, int changeCount)
+    {
+        GraphHistory.Update(GetHistory(appId), DateTime.UtcNow.Date, changeCount);
         SaveGraphHistory();
     }
 
@@ -320,11 +401,14 @@ public class Service : IHostedService
     {
         try
         {
-            var serializable = updateHistory.Select(x => new GraphHistoryEntry
-            {
-                Day = x.day,
-                Updates = x.updates
-            }).ToList();
+            var serializable = updateHistoryByApp
+                .SelectMany(app => app.Value.Select(x => new GraphHistoryEntry
+                {
+                    AppId = app.Key,
+                    Day = x.day,
+                    Updates = x.updates
+                }))
+                .ToList();
 
             var json = JsonSerializer.Serialize(serializable, new JsonSerializerOptions
             {
@@ -351,9 +435,14 @@ public class Service : IHostedService
             if (loaded is null)
                 return;
 
-            updateHistory = GraphHistory.Normalize(loaded, DateTime.UtcNow.Date);
+            updateHistoryByApp = GraphHistory.NormalizeByApp(loaded, DateTime.UtcNow.Date);
 
-            logger.LogInformation("Loaded {Count} graph history entries from {Path}", updateHistory.Count, historyFilePath);
+            foreach (var appId in graphAppIds)
+            {
+                GetHistory(appId);
+            }
+
+            logger.LogInformation("Loaded {Count} graph history entries from {Path}", loaded.Count, historyFilePath);
         }
         catch (Exception ex)
         {
@@ -364,37 +453,67 @@ public class Service : IHostedService
     private string GenerateGraph()
     {
         int window = 30;
-        var days = updateHistory.Select(x => x.day).ToArray();
-        var updates = updateHistory.Select(x => x.updates).ToArray();
-
-        if (days.Length < window)
-        {
-            var missing = window - days.Length;
-            var start = days.Length > 0 ? days[0].AddDays(-missing) : DateTime.UtcNow.Date.AddDays(-(window - 1));
-            var fillDays = Enumerable.Range(0, missing).Select(i => start.AddDays(i)).ToArray();
-            days = fillDays.Concat(days).ToArray();
-            updates = Enumerable.Repeat(0, missing).Concat(updates).ToArray();
-        }
-
+        var endDay = DateTime.UtcNow.Date;
+        var days = Enumerable.Range(0, window)
+            .Select(i => endDay.AddDays(-(window - 1 - i)))
+            .ToArray();
         double[] xs = Enumerable.Range(0, window).Select(i => (double)i).ToArray();
-        double[] ys = updates.Select(x => (double)x).ToArray();
         string[] labels = days.Select(d =>
             d == DateTime.UtcNow.Date ? "Today" :
-            d.ToString("MM-dd")
+            d.ToString("dd/MM")
         ).ToArray();
 
         var plt = new Plot();
         var fg = new ScottPlot.Color("#d4d4d4");
         var bg = new ScottPlot.Color("#0a0a0a");
-        var line = plt.Add.Scatter(xs, ys);
 
         plt.Font.Set("Geist");
-        line.Color = fg;
-        line.LineWidth = 2;
-        line.MarkerSize = 6;
-        line.MarkerShape = MarkerShape.FilledCircle;
-        line.MarkerFillColor = fg;
         plt.Grid.MajorLineColor = new ScottPlot.Color("#300530");
+
+        var appSeries = new[]
+        {
+            (AppId: modToolAppId, Name: "Scrap Mechanic Mod Tool", Color: modToolGraphColor),
+            (AppId: gameAppId, Name: "Scrap Mechanic", Color: gameGraphColor)
+        };
+
+        var allValues = new List<double>();
+
+        foreach (var series in appSeries)
+        {
+            var historyLookup = GetHistory(series.AppId).ToDictionary(x => x.day, x => x.updates);
+            double[] ys = days.Select(day => historyLookup.TryGetValue(day, out var updates) ? (double)updates : 0).ToArray();
+            allValues.AddRange(ys);
+            var line = plt.Add.Scatter(xs, ys);
+            line.Color = series.Color;
+            line.LineWidth = 2;
+            line.MarkerSize = 6;
+            line.MarkerShape = MarkerShape.FilledCircle;
+            line.MarkerFillColor = series.Color;
+        }
+
+        plt.Legend.ManualItems.Clear();
+        plt.Legend.ManualItems.Add(new LegendItem
+        {
+            LabelText = "Scrap Mechanic",
+            LineColor = gameGraphColor,
+            MarkerColor = gameGraphColor,
+            MarkerFillColor = gameGraphColor,
+            MarkerLineColor = gameGraphColor,
+            MarkerShape = MarkerShape.FilledCircle,
+            LineWidth = 2
+        });
+        plt.Legend.ManualItems.Add(new LegendItem
+        {
+            LabelText = "Scrap Mechanic Mod Tool",
+            LineColor = modToolGraphColor,
+            MarkerColor = modToolGraphColor,
+            MarkerFillColor = modToolGraphColor,
+            MarkerLineColor = modToolGraphColor,
+            MarkerShape = MarkerShape.FilledCircle,
+            LineWidth = 2
+        });
+
+        plt.ShowLegend(ScottPlot.Alignment.UpperLeft);
 
         plt.Axes.Left.IsVisible = true;
         plt.Axes.Left.TickLabelStyle.ForeColor = fg;
@@ -405,8 +524,8 @@ public class Service : IHostedService
         plt.Axes.Bottom.TickLabelStyle.ForeColor = fg;
         plt.Axes.Color(fg);
 
-        double yMinData = ys.Min();
-        double yMaxData = ys.Max();
+        double yMinData = allValues.Min();
+        double yMaxData = allValues.Max();
         (double yAxisMin, double yAxisMax, double yTickStep) = GraphScale.GetYAxisScale(yMinData, yMaxData);
         plt.Axes.Left.Min = yAxisMin;
         plt.Axes.Left.Max = yAxisMax;
@@ -435,6 +554,7 @@ public class Service : IHostedService
         plt.DataBorder.Color = fg;
 
         var filePath = $"./data/steam_graph.png";
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
         plt.SavePng(filePath, 900, 400);
 
         return filePath;

@@ -2,6 +2,7 @@ namespace ScrapBot.Steam;
 
 internal sealed class GraphHistoryEntry
 {
+    public uint AppId { get; set; }
     public DateTime Day { get; set; }
     public int Updates { get; set; }
 }
@@ -56,6 +57,28 @@ internal static class GraphHistory
         {
             history.RemoveAt(0);
         }
+    }
+
+    internal static Dictionary<uint, List<(DateTime day, int updates)>> NormalizeByApp(
+        IEnumerable<GraphHistoryEntry> loaded,
+        DateTime endDay,
+        int maxDays = 30,
+        uint legacyAppId = 387990)
+    {
+        return loaded
+            .Where(x => x.Updates >= 0)
+            .GroupBy(x => x.AppId == 0 ? legacyAppId : x.AppId)
+            .ToDictionary(
+                g => g.Key,
+                g => Normalize(
+                    g.Select(x => new GraphHistoryEntry
+                    {
+                        AppId = g.Key,
+                        Day = x.Day,
+                        Updates = x.Updates
+                    }),
+                    endDay,
+                    maxDays));
     }
 
     internal static bool ShouldSendMidnightGraph(
