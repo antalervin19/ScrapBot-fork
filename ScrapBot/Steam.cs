@@ -290,7 +290,7 @@ public class Service : IHostedService
         }
     }
 
-    internal async Task SendGraphTestAsync(bool useSampleData = false)
+    internal async Task SendGraphTest(bool useSampleData = false)
     {
         if (useSampleData)
         {

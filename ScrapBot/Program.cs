@@ -13,7 +13,7 @@ internal static class Program
 
         bool sendGraphTest = args.Any(x => x.Equals("--send-graph-test", StringComparison.OrdinalIgnoreCase));
         bool useSampleData = args.Any(x => x.Equals("--sample-data", StringComparison.OrdinalIgnoreCase));
-        string? testWebhookUrl = GetArgument(args, "--webhook-url");
+        string? testWebhookUrl = GetArgument(args, "--test-discord-webhook");
 
         List<WebhookFile>? webhooks = null;
         if (!sendGraphTest || string.IsNullOrWhiteSpace(testWebhookUrl))
@@ -65,7 +65,7 @@ internal static class Program
         if (sendGraphTest)
         {
             var service = host.Services.GetRequiredService<Steam.Service>();
-            await service.SendGraphTestAsync(useSampleData);
+            await service.SendGraphTest(useSampleData);
             return;
         }
 
